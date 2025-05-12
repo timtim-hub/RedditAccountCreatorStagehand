@@ -79,7 +79,7 @@ async function run() {
 
 // Function to read email and password list
 const readCredentials = () => {
-  const filePath = path.join(__dirname, '../RedditAccountCreator/config/email_pass_list.txt');
+  const filePath = path.join(__dirname, 'config/email_pass_list.txt');
   const data = fs.readFileSync(filePath, 'utf8');
   return data.split('\n').map(line => {
     const [email, password] = line.split(':');
