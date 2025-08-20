@@ -4,6 +4,7 @@ import chalk from "chalk";
 import boxen from "boxen";
 import * as fs from 'fs';
 import * as path from 'path';
+import imap from 'imap-simple';
 
 /**
  * 🤘 Welcome to Stagehand! Thanks so much for trying us out!
@@ -79,13 +80,48 @@ async function run() {
 
 // Function to read email and password list
 const readCredentials = () => {
-  const filePath = path.join(__dirname, 'config/email_pass_list.txt');
+  const filePath = new URL('file://' + process.cwd() + '/config/email_pass_list.txt').pathname;
   const data = fs.readFileSync(filePath, 'utf8');
   return data.split('\n').map(line => {
     const [email, password] = line.split(':');
     return { email, password };
   }).filter(cred => cred.email && cred.password);
 };
+
+async function getVerificationCode(email: string, password: string) {
+  const config = {
+    imap: {
+      user: email,
+      password: password,
+      host: 'imap.gmx.com',
+      port: 993,
+      tls: true,
+      authTimeout: 3000
+    }
+  };
+  try {
+    const connection = await imap.connect(config);
+    await connection.openBox('INBOX');
+    const searchCriteria = ['UNSEEN', ['FROM', 'reddit']];
+    const fetchOptions = { bodies: ['TEXT'], markSeen: true };
+    const messages = await connection.search(searchCriteria, fetchOptions);
+    let code = null;
+    for (const message of messages) {
+      const part = message.parts.find((part: any) => part.which === 'TEXT');
+      const text = part ? part.body : '';
+      const match = text.match(/\d{6}/);
+      if (match) {
+        code = match[0];
+        break;
+      }
+    }
+    connection.end();
+    return code;
+  } catch (error) {
+    console.error('Error fetching email:', error);
+    return null;
+  }
+}
 
 (async () => {
   const stagehandInstance = new Stagehand({
@@ -100,9 +136,26 @@ const readCredentials = () => {
     await page.goto('https://www.reddit.com/register/');
     
     // Use act() to fill in the registration form
-    await page.act('fill in email field with ' + cred.email);
+    const emailField = page.locator('input[type="email"][name="email"]');
+    await emailField.fill(cred.email);
     await page.act('fill in password field with ' + cred.password);
     await page.act('click on continue or sign up button');
+    
+    // Wait for email verification field
+    console.log('Waiting for verification code field...');
+    await page.waitForSelector('input[name="verificationCode"]', { timeout: 60000 });
+    console.log('Verification code field found, attempting to retrieve code...');
+    const verificationCode = await getVerificationCode(cred.email, cred.password);
+    if (verificationCode) {
+      console.log('Verification code retrieved: ' + verificationCode);
+      const codeField = page.locator('input[name="verificationCode"]');
+      await codeField.fill(verificationCode);
+      console.log('Verification code entered, submitting...');
+      await page.act('submit verification code');
+      console.log('Verification code submitted.');
+    } else {
+      console.error('Could not retrieve verification code for ' + cred.email);
+    }
     
     // Add a delay to avoid rate limiting
     await page.waitForTimeout(5000);
